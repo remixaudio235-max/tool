@@ -1,0 +1,10 @@
+PySide6>=6.7
+numpy>=1.26
+scipy>=1.12
+librosa>=0.10
+soundfile>=0.12
+pydub>=0.25
+pyqtgraph>=0.13
+mido>=1.3
+pretty_midi>=0.2
+sounddevice>=0.4
