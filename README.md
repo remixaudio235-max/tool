@@ -3,6 +3,62 @@
 **Input:** Beat gốc đã tách vocal (từ AI tool bên ngoài như Spleeter, Demucs, etc.)
 **Output:** WAV với sonic style hoàn toàn mới
 
+## Cách chạy
+
+### Desktop App (PySide6 + PyQtGraph) — Khuyến nghị
+```bash
+./run_gui.sh
+```
+
+### Web App (FastAPI + trình duyệt) — Tuỳ chọn
+```bash
+./run.sh
+# Mở: http://localhost:8000
+```
+
+Yêu cầu Python 3.9+. Dependencies tự cài lần đầu.
+
+---
+
+## Giao diện Desktop
+
+```
+┌─ 🎛️ BeatStyle ──────────────────────────────────────────────┐
+│                                                              │
+│  ┌─ BƯỚC 1 · UPLOAD BEAT ──────────────────────────────┐   │
+│  │  [Drag & Drop]  →  file-bar + waveform (PyQtGraph)  │   │
+│  │                    [▶ player]                        │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  ┌─ BƯỚC 2 · CHỌN STYLE ──────────────────────────────┐    │
+│  │  🎹 Nhạc Sống │ 🎸 Rock/Metal │ 🎧 Modern          │    │
+│  │  [💙 Bolero] [🌹 Rumba] [💃 Cha-cha] …             │    │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  ┌─ BƯỚC 3 · CƯỜNG ĐỘ ────────────────────────────────┐    │
+│  │  [Nhẹ 30%] [Chuẩn 70%] [Mạnh 100%]  +  slider     │    │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  [ tên file  →  💙 Bolero  @ 70% ]  [🎛️ Chuyển Beat]       │
+│                                                              │
+│  ┌─ ✅ HOÀN THÀNH ─────────────────────────────────────┐   │
+│  │  Style│BPM│Thời gian│Nhịp                            │   │
+│  │  ─────────────────────────────                       │   │
+│  │  ◉ Beat gốc          →    ◉ Style mới               │   │
+│  │  [waveform]               [waveform (PyQtGraph)]     │   │
+│  │  [▶ player]               [▶ player]                 │   │
+│  │                                                       │   │
+│  │  [⬇ Tải về WAV] [Đổi style] [Beat khác]             │   │
+│  └──────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Công nghệ:**
+- `PySide6` — Qt6 framework, không dùng Tkinter
+- `PyQtGraph` — waveform visualization (realtime playhead)
+- `QMediaPlayer` — audio playback built-in Qt6
+- `QThread` — xử lý DSP off main thread, UI không bị đơ
+
 ---
 
 ## 16 Styles
