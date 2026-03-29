@@ -1,111 +1,127 @@
-# BeatShift – Music Beat Converter
+# NhạcSống Beat – Phần mềm chuyển bài hát thành Beat Karaoke Nhạc Sống
 
-Transform any song into a different musical style using signal processing.
-Inspired by Suno, built with Python + FastAPI + vanilla JS.
+Chuyển bất kỳ bài hát nào thành **beat karaoke nhạc sống Việt Nam** với âm thanh Organ Roland / Yamaha.
 
 ---
 
-## Features
+## Tính năng
 
-| Style | Effect |
+### 🎤 Tách Vocal (Karaoke)
+Hai kỹ thuật kết hợp:
+- **Center-channel cancellation** (L − R): Xoá giọng hát ở kênh center trong bản stereo thương mại
+- **HPSS suppression**: Phân tách harmonic (giọng) vs percussive (trống/bass), rồi giảm thành phần harmonic
+- Phục hồi bass/kick sau khi tách để giữ âm thanh đầy đặn
+
+### 🎹 Giả lập Organ Roland / Yamaha
+| Organ | Đặc điểm |
 |---|---|
-| 🎵 Lo-fi Hip Hop | Vinyl crackle, tape saturation, bit-crush, warm low-pass |
-| ⚡ EDM / Electronic | Sidechain compression, sub-bass boost, chorus |
-| 🔥 Trap | 808 sub-bass, hi-hat space, reverb tail |
-| 🎷 Jazz | Swing quantization, tube warmth, room reverb |
-| 🎸 Rock | Guitar amp distortion, cabinet sim, punch |
-| 🌴 Reggaeton | Dembow sidechain, bass boost, crispy highs |
-| 🌸 Bossa Nova | Swing, nylon-string chorus, hall reverb |
-| 💜 R&B / Soul | Deep reverb, tape warmth, lush chorus |
-| 💀 Phonk | Memphis slow-down, pitch shift, vinyl + bit crush |
-| 🌊 Ambient | Dramatic stretch, massive reverb, dreamy pads |
+| **Yamaha** (EL/AR Electone) | Ấm, mượt, tròn — tone nhạc sống cổ điển |
+| **Roland** (VK series) | Sáng, mạnh, hiện đại, attack rõ |
 
-**Effect Intensity** slider (0–100%) controls how strongly the style is applied.
+**Chuỗi xử lý Organ:**
+1. EQ signature (Roland: bright 2.5 kHz · Yamaha: warm 500 Hz)
+2. Tape saturation (tube pre-amp)
+3. **Leslie rotary speaker** (Doppler AM + FM, tốc độ slow/fast)
+4. **Scanner vibrato** (5.5 Hz, 18 cents — đặc trưng Yamaha)
+5. Spring/hall reverb (amp cabinet ambience)
+
+### 🎵 10 Điệu Nhạc Sống Việt Nam
+
+| Điệu | BPM | Nhịp | Cảm xúc |
+|---|---|---|---|
+| 💙 **Bolero** | 72 | 4/4 | Trữ tình, buồn — điệu nhạc Việt đặc trưng |
+| 🌹 **Rumba** | 108 | 4/4 | Lãng mạn, nhẹ nhàng |
+| 💃 **Cha-cha-cha** | 124 | 4/4 | Vui tươi, sôi động |
+| 🎸 **Slow Rock** | 76 | 4/4 | Cảm xúc, ballad rock |
+| 🌊 **Tango** | 122 | 4/4 | Kịch tính, mạnh mẽ |
+| 🪩 **Disco** | 122 | 4/4 | Sôi động, funky |
+| 🌸 **Valse** | 172 | 3/4 | Lãng mạn, nhẹ nhàng |
+| 🦊 **Fox Trot** | 135 | 4/4 | Duyên dáng |
+| 🕺 **Twist** | 130 | 4/4 | Vui nhộn, retro |
+| 🌙 **Ballade** | 56 | 4/4 | Sâu lắng, cô đơn nhất |
 
 ---
 
-## Quick Start
+## Cài đặt & Chạy
 
 ```bash
 ./run.sh
+# Mở trình duyệt: http://localhost:8000
 ```
 
-Then open **http://localhost:8000** in your browser.
-
-Requires Python 3.9+. All dependencies are installed automatically on first run.
+Yêu cầu Python 3.9+. Tất cả dependency tự động cài lần đầu.
 
 ---
 
-## Architecture
+## Cách sử dụng
+
+1. **Tải lên bài hát** (MP3/WAV/FLAC/OGG/M4A, tối đa 50 MB)
+2. **Cài đặt Beat**:
+   - Bật/tắt tách vocal (karaoke mode)
+   - Điều chỉnh mức độ tách (0–100%)
+   - Chọn âm thanh Organ: Yamaha / Roland / Tự động
+   - Cường độ hiệu ứng (0–100%)
+3. **Chọn điệu nhạc sống** (10 điệu)
+4. **Tạo Beat** → Nghe thử → Tải về WAV
+
+---
+
+## Kiến trúc
 
 ```
-beatshift/
+nhacsonbeat/
 ├── backend/
-│   ├── main.py          # FastAPI server, REST API endpoints
-│   └── processor.py     # Audio style engine (DSP pipeline)
+│   ├── main.py        # FastAPI server — REST API
+│   └── processor.py   # DSP engine
+│       ├── remove_vocals()         # Tách vocal (stereo + HPSS)
+│       ├── _leslie_effect()        # Leslie rotary cabinet
+│       ├── _organ_vibrato()        # Yamaha scanner vibrato
+│       ├── _roland_eq() / _yamaha_eq()
+│       └── BoleroProcessor, RumbaProcessor, …  (10 styles)
 ├── frontend/
 │   └── public/
-│       ├── index.html   # Single-page UI
-│       ├── style.css    # Dark-mode design system
-│       └── app.js       # Upload, style selection, conversion flow
+│       ├── index.html   # UI tiếng Việt
+│       ├── style.css    # Dark-mode design
+│       └── app.js       # Upload + convert flow
 ├── requirements.txt
-└── run.sh               # One-command launcher
+└── run.sh
 ```
 
-### API Endpoints
+### API
 
-| Method | Path | Description |
+| Method | Endpoint | Mô tả |
 |---|---|---|
-| `GET` | `/api/styles` | List all available styles |
-| `POST` | `/api/convert` | Upload + convert audio file |
-| `GET` | `/api/download/{filename}` | Download converted file |
+| `GET` | `/api/styles` | Danh sách các điệu |
+| `POST` | `/api/convert` | Upload + chuyển đổi |
+| `GET` | `/api/download/{file}` | Tải về file WAV |
 
-### POST `/api/convert`
+**POST `/api/convert`** — Form fields:
 
-Form fields:
-- `file` – audio file (MP3/WAV/OGG/FLAC/M4A, max 50 MB)
-- `style` – style ID (e.g. `lofi`, `trap`, `jazz`)
-- `intensity` – float 0.0–1.0 (default 0.7)
-
-Response:
-```json
-{
-  "job_id": "uuid",
-  "style": "lofi",
-  "download_url": "/api/download/uuid_lofi.wav",
-  "info": {
-    "original_bpm": 128.0,
-    "duration_sec": 180.5,
-    "spectral_centroid_hz": 2400.0,
-    "beat_count": 384
-  }
-}
-```
+| Field | Type | Default | Mô tả |
+|---|---|---|---|
+| `file` | File | — | File âm thanh |
+| `style` | string | — | `bolero`, `rumba`, `chachacha`… |
+| `intensity` | float 0–1 | 0.7 | Cường độ hiệu ứng |
+| `vocal_removal` | bool | true | Bật tách vocal |
+| `vocal_strength` | float 0–1 | 0.85 | Mức độ tách vocal |
+| `organ_brand` | string | `auto` | `yamaha` / `roland` / `auto` |
 
 ---
 
-## How It Works
+## Kỹ thuật DSP sử dụng
 
-No AI or ML models are used. Each style applies a signal-processing chain:
-
-- **EQ filters** (low-pass, high-pass, band-pass, peak) using IIR biquads
-- **Time stretching & pitch shifting** via librosa STFT phase vocoder
-- **Reverb** via exponential-decay impulse response convolution
-- **Sidechain compression** beat-tracking with librosa + envelope ducking
-- **Tape saturation** soft-clip via `tanh` transfer function
-- **Bit crushing** for vintage lo-fi texture
-- **Vinyl noise** – procedural hiss + sparse crackles
-- **Swing quantization** – stretching/squeezing alternating beat pairs
-- **Distortion** – soft-clip with gain staging
+- **Vocal removal**: Mid/Side processing + librosa HPSS (harmonic-percussive source separation)
+- **Leslie rotary**: AM (amplitude modulation) + FM (Doppler delay modulation), dual-rate treble/bass rotors
+- **Scanner vibrato**: Variable delay với LFO ~5.5 Hz
+- **EQ**: IIR biquad filters (Butterworth LP/HP + parametric peak/notch)
+- **BPM normalisation**: librosa beat tracking + phase vocoder time-stretch
+- **Reverb**: Exponential-decay impulse response convolution
+- **Tape saturation**: `tanh` soft-clip transfer function
 
 ---
 
 ## Dependencies
 
-- `fastapi` + `uvicorn` – web framework
-- `librosa` – audio analysis (BPM, beats, spectral)
-- `soundfile` – audio I/O
-- `scipy` – IIR filter design
-- `numpy` – signal processing arrays
-- `pydub` – format conversion
-- `aiofiles` – async file I/O
+```
+fastapi · uvicorn · librosa · soundfile · scipy · numpy · pydub · aiofiles
+```

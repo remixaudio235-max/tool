@@ -1,9 +1,13 @@
 """
-Beat Converter – audio style transformation engine.
+NhacSong Beat Processor – Karaoke beat converter for Vietnamese live music.
 
-Each style applies a chain of signal-processing steps using
-librosa (analysis), numpy/scipy (DSP) and soundfile (I/O).
-No external ML models are required.
+Pipeline for each track:
+  1. Load audio (stereo-aware)
+  2. Vocal removal  →  karaoke instrumental
+  3. BPM normalisation  →  target rhythm tempo
+  4. Organ simulation  →  Roland / Yamaha tone
+  5. Style-specific rhythm feel (EQ, dynamics, texture)
+  6. Normalize & export
 """
 
 from __future__ import annotations
@@ -12,17 +16,24 @@ import numpy as np
 import soundfile as sf
 import librosa
 from scipy import signal as scipy_signal
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+#  I/O helpers
+# ─────────────────────────────────────────────
 
-def _load(path: str) -> tuple[np.ndarray, int]:
-    """Load audio as mono float32, return (samples, sr)."""
-    y, sr = librosa.load(path, sr=None, mono=True)
-    return y.astype(np.float32), int(sr)
+def _load_stereo(path: str) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Return (left, right, sr) as float32 arrays. Falls back to mono duplication."""
+    data, sr = sf.read(path, always_2d=True)
+    data = data.T.astype(np.float32)          # shape: (channels, samples)
+    if data.shape[0] >= 2:
+        return data[0], data[1], int(sr)
+    return data[0], data[0].copy(), int(sr)
+
+
+def _to_mono(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    return ((left + right) * 0.5).astype(np.float32)
 
 
 def _save(y: np.ndarray, sr: int, path: str):
@@ -33,366 +44,508 @@ def _normalize(y: np.ndarray, target_db: float = -3.0) -> np.ndarray:
     peak = np.max(np.abs(y))
     if peak < 1e-9:
         return y
-    gain = (10 ** (target_db / 20.0)) / peak
-    return y * gain
+    return y * (10 ** (target_db / 20.0)) / peak
 
 
-def _biquad(y: np.ndarray, sr: int, ftype: str, freq: float, Q: float = 0.707,
-            gain_db: float = 0.0) -> np.ndarray:
-    """Apply a biquad filter (lowpass, highpass, peak, shelf)."""
+# ─────────────────────────────────────────────
+#  DSP primitives
+# ─────────────────────────────────────────────
+
+def _lpf(y: np.ndarray, sr: int, cutoff: float, order: int = 2) -> np.ndarray:
     nyq = sr / 2.0
-    freq = min(freq, nyq * 0.99)
-
-    if ftype == "lowpass":
-        b, a = scipy_signal.butter(2, freq / nyq, btype="low")
-    elif ftype == "highpass":
-        b, a = scipy_signal.butter(2, freq / nyq, btype="high")
-    elif ftype == "peak":
-        # Parametric EQ peak using iirpeak
-        w0 = freq / nyq
-        b, a = scipy_signal.iirpeak(w0, Q)
-        lin_gain = 10 ** (gain_db / 20.0)
-        b = b * lin_gain
-    elif ftype == "bandpass":
-        bw_low = max(freq * 0.5, 20) / nyq
-        bw_high = min(freq * 2.0, nyq * 0.99) / nyq
-        b, a = scipy_signal.butter(2, [bw_low, bw_high], btype="band")
-    else:
-        return y
-
+    b, a = scipy_signal.butter(order, min(cutoff, nyq * 0.99) / nyq, btype="low")
     return scipy_signal.lfilter(b, a, y).astype(np.float32)
 
 
-def _reverb(y: np.ndarray, sr: int, room_size: float = 0.5, wet: float = 0.3) -> np.ndarray:
-    """Simple FDN-style reverb via exponential decay convolution."""
-    decay_time = room_size * 3.0  # seconds
-    ir_len = int(decay_time * sr)
-    t = np.linspace(0, decay_time, ir_len)
-    ir = np.random.randn(ir_len).astype(np.float32)
-    ir *= np.exp(-6.0 * t / decay_time).astype(np.float32)
+def _hpf(y: np.ndarray, sr: int, cutoff: float, order: int = 2) -> np.ndarray:
+    nyq = sr / 2.0
+    b, a = scipy_signal.butter(order, max(cutoff, 20) / nyq, btype="high")
+    return scipy_signal.lfilter(b, a, y).astype(np.float32)
+
+
+def _peak_eq(y: np.ndarray, sr: int, freq: float, gain_db: float, Q: float = 1.4) -> np.ndarray:
+    """Parametric peak/notch EQ."""
+    nyq = sr / 2.0
+    w0 = min(freq / nyq, 0.99)
+    A = 10 ** (gain_db / 40.0)
+    alpha = np.sin(np.arccos(w0)) / (2 * Q)
+    b0 =  1 + alpha * A
+    b1 = -2 * np.cos(np.arccos(w0))
+    b2 =  1 - alpha * A
+    a0 =  1 + alpha / A
+    a1 = -2 * np.cos(np.arccos(w0))
+    a2 =  1 - alpha / A
+    b = np.array([b0/a0, b1/a0, b2/a0])
+    a = np.array([1.0,   a1/a0, a2/a0])
+    return scipy_signal.lfilter(b, a, y).astype(np.float32)
+
+
+def _reverb(y: np.ndarray, sr: int, room: float = 0.4, wet: float = 0.25) -> np.ndarray:
+    ir_len = int(room * 3.0 * sr)
+    t = np.linspace(0, room * 3.0, ir_len)
+    ir = np.random.default_rng(42).standard_normal(ir_len).astype(np.float32)
+    ir *= np.exp(-6.0 * t / (room * 3.0)).astype(np.float32)
     ir /= np.max(np.abs(ir) + 1e-9)
-    wet_signal = np.convolve(y, ir, mode="full")[: len(y)]
-    return (1 - wet) * y + wet * wet_signal.astype(np.float32)
+    wet_sig = np.convolve(y, ir, mode="full")[: len(y)]
+    return (1 - wet) * y + wet * wet_sig.astype(np.float32)
 
 
-def _chorus(y: np.ndarray, sr: int, depth_ms: float = 8.0, rate_hz: float = 0.8,
-            wet: float = 0.3) -> np.ndarray:
-    depth = int(depth_ms / 1000.0 * sr)
-    max_delay = depth * 2
-    lfo = (np.sin(2 * np.pi * rate_hz * np.arange(len(y)) / sr) * 0.5 + 0.5) * depth
+def _tape_sat(y: np.ndarray, drive: float = 0.4) -> np.ndarray:
+    return (np.tanh(y * (1.0 + drive * 3.0)) / (1.0 + drive * 0.5)).astype(np.float32)
+
+
+def _time_stretch(y: np.ndarray, rate: float) -> np.ndarray:
+    if abs(rate - 1.0) < 0.005:
+        return y
+    try:
+        return librosa.effects.time_stretch(y, rate=rate).astype(np.float32)
+    except Exception:
+        return y
+
+
+# ─────────────────────────────────────────────
+#  Vocal Removal
+# ─────────────────────────────────────────────
+
+def remove_vocals(left: np.ndarray, right: np.ndarray, sr: int,
+                  strength: float = 1.0) -> np.ndarray:
+    """
+    Karaoke vocal removal using two complementary techniques:
+
+    1. Center-channel cancellation (L - R):
+       Works well on commercial stereo masters where lead vocal is panned center.
+
+    2. HPSS-based vocal suppression on mono:
+       Decomposes into harmonic (melody/vocal) + percussive (drums/bass),
+       then attenuates the harmonic component that contains mid-range vocals.
+
+    The two results are mixed; the balance depends on how different L and R are.
+    """
+    # --- Technique 1: stereo mid/side ---
+    mid  = (left + right) * 0.5          # M  (everything)
+    side = (left - right) * 0.5          # S  (everything NOT in center)
+
+    # Blend: full side + partial mid (keeps bass/drum which is also centered)
+    # Remove only vocal frequency range from mid (300 Hz – 4 kHz)
+    mid_lf   = _lpf(mid, sr, 250)         # bass stays
+    mid_hf   = _hpf(mid, sr, 4500)        # air stays
+    mid_keep = mid_lf + mid_hf * 0.5
+
+    vocal_canceled = mid_keep + side       # mid-range mostly gone
+
+    # --- Technique 2: HPSS harmonic suppression ---
+    D = librosa.stft(mid)
+    H, P = librosa.decompose.hpss(D, margin=(1.0, 5.0))
+    # Keep percussive fully, attenuate harmonic (where vocals live)
+    scale = 1.0 - strength * 0.75
+    D_noVocal = H * scale + P
+    hpss_result = librosa.istft(D_noVocal, length=len(mid)).astype(np.float32)
+
+    # Blend the two approaches
+    stereo_diff = float(np.mean(np.abs(left - right)))
+    # If stereo_diff is large → strong stereo → trust center-cancel more
+    blend = min(stereo_diff / 0.15, 1.0)
+    result = blend * vocal_canceled + (1.0 - blend) * hpss_result
+
+    # Restore low-end body (bass guitar/kick lost in cancellation)
+    bass_restore = _lpf(mid, sr, 180) * 0.8
+    result = result + bass_restore
+
+    return result.astype(np.float32)
+
+
+# ─────────────────────────────────────────────
+#  Roland / Yamaha Organ Simulation
+# ─────────────────────────────────────────────
+
+def _leslie_effect(y: np.ndarray, sr: int,
+                   speed: str = "slow",
+                   depth: float = 0.35) -> np.ndarray:
+    """
+    Leslie rotary speaker cabinet simulation.
+
+    The Leslie cabinet has two rotors:
+      - Treble horn  (fast: ~400 RPM / slow: ~50 RPM)
+      - Bass drum    (fast: ~300 RPM / slow: ~40 RPM)
+
+    Simulated via dual-rate AM (tremolo) + FM (Doppler pitch wobble).
+    """
+    rate_hz = 6.5 if speed == "fast" else 0.85
+    bass_rate = rate_hz * 0.75
+
+    t = np.arange(len(y), dtype=np.float32) / sr
+
+    # ── Treble section (AM + slight pitch mod) ──
+    am_treble = 1.0 - depth * 0.55 * (np.sin(2 * np.pi * rate_hz * t).astype(np.float32))
+    y_hi  = _hpf(y, sr, 800)
+    y_lo  = _lpf(y, sr, 800)
+    y_hi  = y_hi * am_treble
+
+    # Doppler: variable-delay approximated by short chorus
+    max_delay_s = 0.003                     # 3 ms max
+    delay_curve = (max_delay_s * sr *
+                   (0.5 + 0.5 * np.sin(2 * np.pi * rate_hz * t))).astype(int)
+    y_hi_dop = np.zeros_like(y_hi)
+    for i in range(len(y_hi)):
+        src = i - int(delay_curve[i])
+        y_hi_dop[i] = y_hi[src] if 0 <= src < len(y_hi) else 0.0
+
+    # ── Bass section (slower AM) ──
+    am_bass = 1.0 - depth * 0.3 * (np.sin(2 * np.pi * bass_rate * t).astype(np.float32))
+    y_lo = y_lo * am_bass
+
+    return (y_lo + y_hi_dop).astype(np.float32)
+
+
+def _organ_vibrato(y: np.ndarray, sr: int,
+                   rate_hz: float = 5.5, depth_cents: float = 20.0) -> np.ndarray:
+    """
+    Yamaha organ vibrato scanner simulation.
+    Modulates pitch at ~5–6 Hz (similar to drawbar organ scanner vibrato).
+    """
+    depth_s = (depth_cents / 1200.0) / rate_hz   # convert cents to seconds of delay
+    max_delay = int(depth_s * sr * 12)
+    if max_delay < 1:
+        return y
+    t = np.arange(len(y), dtype=np.float32) / sr
+    delay_curve = (max_delay * 0.5 *
+                   (1 + np.sin(2 * np.pi * rate_hz * t))).astype(int)
     out = np.zeros_like(y)
     for i in range(len(y)):
-        delay = int(lfo[i]) + max_delay // 2
-        src = i - delay
+        src = i - int(delay_curve[i])
         out[i] = y[src] if 0 <= src < len(y) else 0.0
-    return (1 - wet) * y + wet * out
+    return out.astype(np.float32)
 
 
-def _vinyl_noise(length: int, sr: int, amount: float = 0.015) -> np.ndarray:
-    """Generate vinyl crackle and hiss."""
-    hiss = np.random.randn(length).astype(np.float32) * amount * 0.4
-    # Sparse crackles
-    crackles = np.zeros(length, dtype=np.float32)
-    n_crackles = int(sr * 0.3)  # ~0.3 per second
-    positions = np.random.randint(0, length, n_crackles)
-    for p in positions:
-        click_len = np.random.randint(50, 300)
-        end = min(p + click_len, length)
-        crackles[p:end] += np.random.randn(end - p).astype(np.float32) * amount * 0.8
-    return hiss + crackles
-
-
-def _tape_saturation(y: np.ndarray, drive: float = 0.5) -> np.ndarray:
-    """Soft-clip saturation emulating tape."""
-    return np.tanh(y * (1.0 + drive * 3.0)) / (1.0 + drive * 0.5)
-
-
-def _distortion(y: np.ndarray, gain: float = 4.0, mix: float = 0.5) -> np.ndarray:
-    driven = np.clip(y * gain, -1.0, 1.0)
-    driven = np.sign(driven) * (1 - np.exp(-np.abs(driven * 3.0)))
-    return (1 - mix) * y + mix * driven
-
-
-def _bit_crush(y: np.ndarray, bits: int = 12) -> np.ndarray:
-    steps = 2 ** bits
-    return np.round(y * steps) / steps
-
-
-def _pitch_shift_simple(y: np.ndarray, sr: int, semitones: float) -> np.ndarray:
-    if abs(semitones) < 0.01:
-        return y
-    try:
-        return librosa.effects.pitch_shift(y, sr=sr, n_steps=semitones)
-    except Exception:
-        return y
-
-
-def _time_stretch_simple(y: np.ndarray, rate: float) -> np.ndarray:
-    if abs(rate - 1.0) < 0.01:
-        return y
-    try:
-        return librosa.effects.time_stretch(y, rate=rate)
-    except Exception:
-        return y
-
-
-def _sidechain_compress(y: np.ndarray, sr: int, threshold: float = 0.4,
-                        attack_ms: float = 5.0, release_ms: float = 80.0) -> np.ndarray:
-    """Simulated sidechaining: duck audio on every beat."""
-    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-    beat_samples = librosa.frames_to_samples(beats)
-
-    env = np.ones(len(y), dtype=np.float32)
-    attack = int(attack_ms / 1000.0 * sr)
-    release = int(release_ms / 1000.0 * sr)
-
-    for b in beat_samples:
-        # Duck down
-        end_a = min(b + attack, len(y))
-        env[b:end_a] = np.linspace(1.0, threshold, end_a - b)
-        # Release back up
-        end_r = min(end_a + release, len(y))
-        env[end_a:end_r] = np.linspace(threshold, 1.0, end_r - end_a)
-
-    return (y * env).astype(np.float32)
-
-
-def _swing_quantize(y: np.ndarray, sr: int, swing: float = 0.6) -> np.ndarray:
-    """Add swing feel by slightly stretching/squeezing alternating beats."""
-    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-    if len(beats) < 4:
-        return y
-    beat_samples = librosa.frames_to_samples(beats)
-
-    out_chunks = []
-    for i in range(0, len(beat_samples) - 1, 2):
-        s1 = beat_samples[i]
-        s2 = beat_samples[i + 1]
-        s3 = beat_samples[i + 2] if i + 2 < len(beat_samples) else len(y)
-        half = (s3 - s1) / 2
-
-        # On-beat: longer
-        on_len = int(half * (1 + swing - 0.5))
-        # Off-beat: shorter
-        off_len = int(half * (1 - (swing - 0.5)))
-
-        chunk_on = y[s1:s2]
-        chunk_off = y[s2:s3]
-        if len(chunk_on) > 0 and on_len > 0:
-            chunk_on = _time_stretch_simple(chunk_on, len(chunk_on) / max(on_len, 1))
-        if len(chunk_off) > 0 and off_len > 0:
-            chunk_off = _time_stretch_simple(chunk_off, len(chunk_off) / max(off_len, 1))
-        out_chunks.extend([chunk_on, chunk_off])
-
-    if out_chunks:
-        return np.concatenate(out_chunks).astype(np.float32)
+def _roland_eq(y: np.ndarray, sr: int) -> np.ndarray:
+    """Roland VK-series drawbar organ EQ signature: bright, punchy, clear attack."""
+    y = _hpf(y, sr, 55)                        # remove sub rumble
+    y = _peak_eq(y, sr, 300,  -2.0, Q=0.9)     # tame mud
+    y = _peak_eq(y, sr, 800,  +3.5, Q=1.2)     # punch / body
+    y = _peak_eq(y, sr, 2500, +4.0, Q=1.5)     # presence / attack
+    y = _peak_eq(y, sr, 6000, +2.0, Q=1.0)     # brightness
+    y = _lpf(y, sr, 12000)                      # smooth air (organ speaker roll-off)
     return y
 
 
-# ---------------------------------------------------------------------------
-# Style processors
-# ---------------------------------------------------------------------------
+def _yamaha_eq(y: np.ndarray, sr: int) -> np.ndarray:
+    """Yamaha EL/AR electone organ EQ: warm, round, lush — classic nhạc sống tone."""
+    y = _hpf(y, sr, 45)
+    y = _peak_eq(y, sr, 200,  +2.0, Q=0.8)     # warmth
+    y = _peak_eq(y, sr, 500,  +2.5, Q=1.1)     # fullness
+    y = _peak_eq(y, sr, 1200, +1.5, Q=1.2)     # midrange
+    y = _peak_eq(y, sr, 3500, -1.5, Q=1.3)     # reduce harshness
+    y = _peak_eq(y, sr, 7000, +1.0, Q=1.0)     # subtle air
+    y = _lpf(y, sr, 10000)                      # warm roll-off
+    return y
+
+
+def _apply_organ(y: np.ndarray, sr: int,
+                 brand: str = "yamaha",
+                 leslie_speed: str = "slow",
+                 leslie_depth: float = 0.30,
+                 vibrato: bool = True) -> np.ndarray:
+    """Full organ simulation chain."""
+    # 1. Tone EQ
+    if brand == "roland":
+        y = _roland_eq(y, sr)
+    else:
+        y = _yamaha_eq(y, sr)
+
+    # 2. Tape saturation (tube pre-amp feel)
+    y = _tape_sat(y, drive=0.25)
+
+    # 3. Leslie rotary cabinet
+    y = _leslie_effect(y, sr, speed=leslie_speed, depth=leslie_depth)
+
+    # 4. Organ vibrato (Yamaha-style scanner vibrato)
+    if vibrato:
+        y = _organ_vibrato(y, sr, rate_hz=5.5, depth_cents=18.0)
+
+    # 5. Short spring/hall reverb (amp cabinet ambience)
+    y = _reverb(y, sr, room=0.3, wet=0.18)
+
+    return y
+
+
+# ─────────────────────────────────────────────
+#  BPM Normalisation
+# ─────────────────────────────────────────────
+
+def _normalise_bpm(y: np.ndarray, sr: int, target_bpm: float) -> Tuple[np.ndarray, float]:
+    """Stretch audio to match a target BPM (±40% guard)."""
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    detected = float(np.atleast_1d(tempo)[0])
+    if detected < 20:
+        return y, detected           # couldn't detect; skip
+
+    ratio = detected / target_bpm
+    ratio = max(0.60, min(1.70, ratio))    # guard: don't stretch beyond ±40%
+    if abs(ratio - 1.0) < 0.03:
+        return y, detected
+
+    stretched = _time_stretch(y, rate=ratio)
+    return stretched, detected
+
+
+# ─────────────────────────────────────────────
+#  Vietnamese Nhạc Sống Style Processors
+# ─────────────────────────────────────────────
 
 class StyleProcessor:
+    TARGET_BPM: float = 100.0
+    ORGAN_BRAND: str  = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
         raise NotImplementedError
 
+    def _organ(self, y: np.ndarray, sr: int, intensity: float,
+               leslie_speed: str = "slow") -> np.ndarray:
+        depth = 0.20 + intensity * 0.25
+        return _apply_organ(y, sr, brand=self.ORGAN_BRAND,
+                            leslie_speed=leslie_speed,
+                            leslie_depth=depth,
+                            vibrato=True)
 
-class LofiProcessor(StyleProcessor):
+
+class BoleroProcessor(StyleProcessor):
+    """
+    Bolero – Điệu buồn nhất, chậm rãi (~70 BPM, 4/4).
+    Đặc trưng: organ ấm, sustain dài, bass nhẹ nhàng, reverb lớn.
+    """
+    TARGET_BPM = 72.0
+    ORGAN_BRAND = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slow down slightly (95%)
-        y = _time_stretch_simple(y, 1.0 / 0.95)
-        # 2. Low-pass filter (warm, dull)
-        cutoff = int(8000 - intensity * 4000)
-        y = _biquad(y, sr, "lowpass", cutoff)
-        # 3. Tape saturation
-        y = _tape_saturation(y, drive=intensity * 0.6)
-        # 4. Bit crush for vintage feel
-        bits = int(16 - intensity * 4)
-        y = _bit_crush(y, bits=max(bits, 10))
-        # 5. Vinyl noise
-        noise = _vinyl_noise(len(y), sr, amount=0.012 * intensity)
-        y = y + noise
-        # 6. Gentle reverb
-        y = _reverb(y, sr, room_size=0.3, wet=0.15 * intensity)
+        # Warm low-mids
+        y = _peak_eq(y, sr, 400, +2.5 * intensity, Q=0.9)
+        # Cut harsh mids
+        y = _peak_eq(y, sr, 1500, -3.0 * intensity, Q=1.2)
+        # Organ simulation
+        y = self._organ(y, sr, intensity, leslie_speed="slow")
+        # Long sustain reverb (hall)
+        y = _reverb(y, sr, room=0.65, wet=0.30 * intensity)
+        # Subtle high-frequency softening
+        y = _lpf(y, sr, 9000 + (1 - intensity) * 3000)
         return y
 
 
-class EDMProcessor(StyleProcessor):
+class RumbaProcessor(StyleProcessor):
+    """
+    Rumba – Latin groove (~110 BPM, 4/4).
+    Đặc trưng: organ nhịp nhàng, bass syncopated, nhẹ nhàng.
+    """
+    TARGET_BPM = 108.0
+    ORGAN_BRAND = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Sidechain compression (pumping)
-        y = _sidechain_compress(y, sr, threshold=0.3 + (1 - intensity) * 0.4)
-        # 2. Sub-bass boost
-        y_bass = _biquad(y, sr, "lowpass", 80)
-        y = y + y_bass * intensity * 0.5
-        # 3. High-frequency air boost
-        y_air = _biquad(y, sr, "highpass", 10000)
-        y = y + y_air * intensity * 0.3
-        # 4. Chorus/width
-        y = _chorus(y, sr, depth_ms=6.0, rate_hz=0.5, wet=intensity * 0.25)
-        # 5. Hard clip for loudness
-        y = np.clip(y * (1.0 + intensity * 0.4), -1.0, 1.0)
+        # Bright Latin top-end
+        y = _peak_eq(y, sr, 3000, +2.0 * intensity, Q=1.2)
+        y = _peak_eq(y, sr, 200,  +1.5 * intensity, Q=0.9)
+        # Organ
+        y = self._organ(y, sr, intensity, leslie_speed="slow")
+        # Medium room
+        y = _reverb(y, sr, room=0.35, wet=0.18 * intensity)
         return y
 
 
-class TrapProcessor(StyleProcessor):
+class ChaChaChaProcessor(StyleProcessor):
+    """
+    Cha-cha-cha – Vui tươi (~125 BPM, 4/4).
+    Đặc trưng: organ nhanh, staccato feel, bright.
+    """
+    TARGET_BPM = 124.0
+    ORGAN_BRAND = "roland"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slow down (trap is ~70–90 BPM feel)
-        y = _time_stretch_simple(y, 1.0 / 0.92)
-        # 2. Heavy sub-bass (808-style)
-        y_sub = _biquad(y, sr, "lowpass", 60)
-        y = y + y_sub * intensity * 1.2
-        # 3. Cut mids, boost highs (hi-hat space)
-        y = _biquad(y, sr, "highpass", 60)
-        y_hi = _biquad(y, sr, "highpass", 6000)
-        y = y + y_hi * intensity * 0.4
-        # 4. Distort 808
-        y = _distortion(y, gain=1.5 + intensity, mix=intensity * 0.35)
-        # 5. Reverb tail
-        y = _reverb(y, sr, room_size=0.6, wet=0.2 * intensity)
+        # Bright & punchy
+        y = _peak_eq(y, sr, 800,  +3.0 * intensity, Q=1.3)
+        y = _peak_eq(y, sr, 4000, +2.5 * intensity, Q=1.2)
+        y = _hpf(y, sr, 100)
+        # Roland organ – bright
+        y = self._organ(y, sr, intensity, leslie_speed="fast")
+        # Short bright reverb
+        y = _reverb(y, sr, room=0.2, wet=0.12 * intensity)
         return y
 
 
-class JazzProcessor(StyleProcessor):
+class SlowRockProcessor(StyleProcessor):
+    """
+    Slow Rock – ~75 BPM, 4/4. Ballad rock cảm xúc.
+    Đặc trưng: organ dày, distortion nhẹ, reverb lớn.
+    """
+    TARGET_BPM = 76.0
+    ORGAN_BRAND = "roland"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Swing quantization
-        y = _swing_quantize(y, sr, swing=0.55 + intensity * 0.15)
-        # 2. Warm low-pass (tube amp feel)
-        y = _biquad(y, sr, "lowpass", 12000 - intensity * 2000)
-        # 3. Tape saturation (warm)
-        y = _tape_saturation(y, drive=intensity * 0.3)
-        # 4. Room reverb
-        y = _reverb(y, sr, room_size=0.4, wet=0.2 * intensity)
-        # 5. Mid boost (presence)
-        y_mid = _biquad(y, sr, "bandpass", 1500)
-        y = y + y_mid * intensity * 0.1
+        # Drive (light overdrive)
+        driven = np.tanh(y * (1.5 + intensity * 2.0)) / (1.5 + intensity * 0.5)
+        y = (1 - intensity * 0.45) * y + intensity * 0.45 * driven.astype(np.float32)
+        # High-pass tighten
+        y = _hpf(y, sr, 100)
+        # Upper-mid presence
+        y = _peak_eq(y, sr, 2500, +3.5 * intensity, Q=1.3)
+        # Roland organ
+        y = self._organ(y, sr, intensity, leslie_speed="fast")
+        # Plate reverb
+        y = _reverb(y, sr, room=0.5, wet=0.25 * intensity)
         return y
 
 
-class RockProcessor(StyleProcessor):
+class TangoProcessor(StyleProcessor):
+    """
+    Tango – Mạnh mẽ, kịch tính (~120 BPM, 2/4 or 4/4).
+    Đặc trưng: organ sắc bén, staccato, bass chắc.
+    """
+    TARGET_BPM = 122.0
+    ORGAN_BRAND = "roland"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Guitar amp distortion
-        y = _distortion(y, gain=2.0 + intensity * 3.0, mix=intensity * 0.6)
-        # 2. High-pass (tighten low end)
-        y = _biquad(y, sr, "highpass", 120)
-        # 3. Upper-mid boost (aggression)
-        y_mid = _biquad(y, sr, "bandpass", 3000)
-        y = y + y_mid * intensity * 0.3
-        # 4. Cabinet sim: low-pass roll off highs
-        y = _biquad(y, sr, "lowpass", 7000 + (1 - intensity) * 4000)
-        # 5. Plate reverb
-        y = _reverb(y, sr, room_size=0.35, wet=0.15 * intensity)
+        # Sharp attack boost
+        y = _peak_eq(y, sr, 1000, +4.0 * intensity, Q=1.5)
+        y = _peak_eq(y, sr, 300,  +2.0 * intensity, Q=1.0)
+        y = _peak_eq(y, sr, 5000, -1.5 * intensity, Q=1.2)
+        # Roland – bright & cutting
+        y = self._organ(y, sr, intensity, leslie_speed="fast")
+        # Hard limiting for drama
+        y = np.clip(y * (1.0 + intensity * 0.3), -1.0, 1.0)
+        # Tight room
+        y = _reverb(y, sr, room=0.25, wet=0.12 * intensity)
         return y
 
 
-class ReggaetonProcessor(StyleProcessor):
+class DiscoProcessor(StyleProcessor):
+    """
+    Disco – Sôi động (~120–126 BPM, 4/4).
+    Đặc trưng: organ funky, bass pumping, bright highs.
+    """
+    TARGET_BPM = 122.0
+    ORGAN_BRAND = "roland"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Bump BPM slightly (dembow feel ~95–100)
-        y = _time_stretch_simple(y, 0.97)
-        # 2. Bass boost
-        y_bass = _biquad(y, sr, "lowpass", 120)
-        y = y + y_bass * intensity * 0.8
-        # 3. Sidechain on off-beats
-        y = _sidechain_compress(y, sr, threshold=0.5, attack_ms=3.0, release_ms=60.0)
-        # 4. Bright, crispy highs
-        y_hi = _biquad(y, sr, "highpass", 8000)
-        y = y + y_hi * intensity * 0.2
-        # 5. Chorus (space)
-        y = _chorus(y, sr, depth_ms=4.0, rate_hz=0.4, wet=intensity * 0.15)
+        # Sidechain-like ducking on beats
+        try:
+            _, beats = librosa.beat.beat_track(y=y, sr=sr)
+            beat_samples = librosa.frames_to_samples(beats)
+            env = np.ones(len(y), dtype=np.float32)
+            atk = int(0.005 * sr)
+            rel = int(0.07 * sr)
+            for b in beat_samples:
+                e = min(b + atk, len(y)); env[b:e] = np.linspace(1, 0.35, e - b)
+                e2 = min(e + rel, len(y)); env[e:e2] = np.linspace(0.35, 1, e2 - e)
+            y = y * env
+        except Exception:
+            pass
+        # Funky mid boost
+        y = _peak_eq(y, sr, 700,  +3.0 * intensity, Q=1.2)
+        y = _peak_eq(y, sr, 8000, +2.5 * intensity, Q=1.0)
+        # Roland organ
+        y = self._organ(y, sr, intensity, leslie_speed="fast")
         return y
 
 
-class BossanovaProcessor(StyleProcessor):
+class ValseProcessor(StyleProcessor):
+    """
+    Valse (Waltz) – Nhẹ nhàng, lãng mạn (~170 BPM, 3/4).
+    Đặc trưng: organ lả lướt, reverb lớn, ấm áp.
+    """
+    TARGET_BPM = 172.0
+    ORGAN_BRAND = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slight swing
-        y = _swing_quantize(y, sr, swing=0.52 + intensity * 0.06)
-        # 2. Warm EQ: boost low-mids
-        y_lm = _biquad(y, sr, "bandpass", 400)
-        y = y + y_lm * intensity * 0.15
-        # 3. High-pass (remove rumble)
-        y = _biquad(y, sr, "highpass", 80)
-        # 4. Gentle chorus (nylon string feel)
-        y = _chorus(y, sr, depth_ms=5.0, rate_hz=0.6, wet=intensity * 0.2)
-        # 5. Hall reverb
-        y = _reverb(y, sr, room_size=0.5, wet=0.25 * intensity)
+        # Flowing mid-high
+        y = _peak_eq(y, sr, 600,  +2.0 * intensity, Q=0.9)
+        y = _peak_eq(y, sr, 3500, +1.5 * intensity, Q=1.2)
+        # Yamaha – warm & lush
+        y = self._organ(y, sr, intensity, leslie_speed="slow")
+        # Big hall reverb (ballroom feel)
+        y = _reverb(y, sr, room=0.7, wet=0.35 * intensity)
+        # Smooth highs
+        y = _lpf(y, sr, 10000)
         return y
 
 
-class RnBProcessor(StyleProcessor):
+class FoxProcessor(StyleProcessor):
+    """
+    Fox Trot – Nhẹ nhàng, duyên dáng (~135 BPM, 4/4).
+    """
+    TARGET_BPM = 135.0
+    ORGAN_BRAND = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slight slowdown (smooth)
-        y = _time_stretch_simple(y, 1.0 / 0.97)
-        # 2. Low-end warmth
-        y_bass = _biquad(y, sr, "lowpass", 200)
-        y = y + y_bass * intensity * 0.4
-        # 3. Smooth highs
-        y = _biquad(y, sr, "lowpass", 14000)
-        # 4. Tape saturation
-        y = _tape_saturation(y, drive=intensity * 0.4)
-        # 5. Deep reverb
-        y = _reverb(y, sr, room_size=0.55, wet=0.3 * intensity)
-        # 6. Lush chorus
-        y = _chorus(y, sr, depth_ms=10.0, rate_hz=0.4, wet=intensity * 0.2)
+        y = _peak_eq(y, sr, 500,  +2.0 * intensity, Q=1.0)
+        y = _peak_eq(y, sr, 2500, +2.0 * intensity, Q=1.2)
+        y = self._organ(y, sr, intensity, leslie_speed="slow")
+        y = _reverb(y, sr, room=0.3, wet=0.20 * intensity)
         return y
 
 
-class PhonkProcessor(StyleProcessor):
+class TwistProcessor(StyleProcessor):
+    """
+    Twist – Vui nhộn, retro (~130 BPM, 4/4).
+    Đặc trưng: organ vintage, lo-fi nhẹ, bright treble.
+    """
+    TARGET_BPM = 130.0
+    ORGAN_BRAND = "roland"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slow + pitch down (dark Memphis feel)
-        y = _time_stretch_simple(y, 1.0 / 0.88)
-        y = _pitch_shift_simple(y, sr, semitones=-2.0 * intensity)
-        # 2. Heavy distorted 808 sub
-        y_sub = _biquad(y, sr, "lowpass", 80)
-        y_sub = _distortion(y_sub, gain=3.0, mix=0.8)
-        y = y + y_sub * intensity
-        # 3. Vinyl texture
-        noise = _vinyl_noise(len(y), sr, amount=0.02 * intensity)
-        y = y + noise
-        # 4. Bit crush for grit
-        y = _bit_crush(y, bits=int(14 - intensity * 3))
-        # 5. Dark low-pass
-        y = _biquad(y, sr, "lowpass", 10000 - intensity * 3000)
+        # Retro bite
+        y = _peak_eq(y, sr, 1200, +4.0 * intensity, Q=1.5)
+        y = _peak_eq(y, sr, 5000, +3.0 * intensity, Q=1.2)
+        # Vintage tape sat
+        y = _tape_sat(y, drive=intensity * 0.5)
+        # Roland fast leslie
+        y = self._organ(y, sr, intensity, leslie_speed="fast")
+        # Tight room
+        y = _reverb(y, sr, room=0.2, wet=0.12 * intensity)
         return y
 
 
-class AmbientProcessor(StyleProcessor):
+class BalladeProcessor(StyleProcessor):
+    """
+    Ballade – Chậm rãi, sâu lắng (~55 BPM, 4/4 or 6/8).
+    Đặc trưng: organ sâu lắng, sustain rất dài, bass ấm.
+    """
+    TARGET_BPM = 56.0
+    ORGAN_BRAND = "yamaha"
+
     def process(self, y: np.ndarray, sr: int, intensity: float) -> np.ndarray:
-        # 1. Slow down dramatically
-        y = _time_stretch_simple(y, 1.0 / 0.7)
-        # 2. Pitch shift up slightly (ethereal)
-        y = _pitch_shift_simple(y, sr, semitones=intensity * 3)
-        # 3. Remove harshness
-        y = _biquad(y, sr, "lowpass", 6000 - intensity * 1000)
-        y = _biquad(y, sr, "highpass", 200)
-        # 4. Massive reverb
-        y = _reverb(y, sr, room_size=0.9, wet=0.6 * intensity)
-        # 5. Lush chorus
-        y = _chorus(y, sr, depth_ms=15.0, rate_hz=0.25, wet=intensity * 0.5)
-        # 6. Fade edges
-        fade = int(sr * 2.0)
+        # Very warm low-mids
+        y = _peak_eq(y, sr, 300,  +3.0 * intensity, Q=0.8)
+        y = _peak_eq(y, sr, 2000, -2.0 * intensity, Q=1.0)   # cut harshness
+        # Ultra-warm Yamaha organ
+        y = self._organ(y, sr, intensity, leslie_speed="slow")
+        # Cathedral reverb
+        y = _reverb(y, sr, room=0.85, wet=0.40 * intensity)
+        # Fade in/out edges
+        fade = int(sr * 1.5)
         if len(y) > fade * 2:
-            y[:fade] *= np.linspace(0, 1, fade)
+            y[:fade]  *= np.linspace(0, 1, fade)
             y[-fade:] *= np.linspace(1, 0, fade)
         return y
 
 
-# ---------------------------------------------------------------------------
-# Main converter
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────
+#  Registry
+# ─────────────────────────────────────────────
 
 PROCESSORS: Dict[str, StyleProcessor] = {
-    "lofi":      LofiProcessor(),
-    "edm":       EDMProcessor(),
-    "trap":      TrapProcessor(),
-    "jazz":      JazzProcessor(),
-    "rock":      RockProcessor(),
-    "reggaeton": ReggaetonProcessor(),
-    "bossanova": BossanovaProcessor(),
-    "rnb":       RnBProcessor(),
-    "phonk":     PhonkProcessor(),
-    "ambient":   AmbientProcessor(),
+    "bolero":    BoleroProcessor(),
+    "rumba":     RumbaProcessor(),
+    "chachacha": ChaChaChaProcessor(),
+    "slowrock":  SlowRockProcessor(),
+    "tango":     TangoProcessor(),
+    "disco":     DiscoProcessor(),
+    "valse":     ValseProcessor(),
+    "fox":       FoxProcessor(),
+    "twist":     TwistProcessor(),
+    "ballade":   BalladeProcessor(),
 }
 
+
+# ─────────────────────────────────────────────
+#  Main Converter
+# ─────────────────────────────────────────────
 
 class BeatConverter:
     def convert(
@@ -401,37 +554,50 @@ class BeatConverter:
         output_path: str,
         style: str,
         intensity: float = 0.7,
+        vocal_removal: bool = True,
+        vocal_strength: float = 0.85,
+        organ_brand: str = "auto",       # "auto" | "roland" | "yamaha"
     ) -> Dict[str, Any]:
-        y, sr = _load(input_path)
 
-        # Analyse before conversion
-        duration = len(y) / sr
+        left, right, sr = _load_stereo(input_path)
+        y_mono = _to_mono(left, right)
+
+        # ── Analysis (pre-processing) ──
+        duration = len(y_mono) / sr
         try:
-            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+            tempo, beats = librosa.beat.beat_track(y=y_mono, sr=sr)
             bpm = float(np.atleast_1d(tempo)[0])
         except Exception:
             bpm = 0.0
             beats = np.array([])
 
-        spectral_centroid = float(
-            np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-        )
-        rms = float(np.sqrt(np.mean(y ** 2)))
+        # ── Step 1: Vocal removal ──
+        if vocal_removal:
+            y = remove_vocals(left, right, sr, strength=vocal_strength)
+        else:
+            y = y_mono.copy()
 
-        # Apply style
-        processor = PROCESSORS[style]
-        y_out = processor.process(y.copy(), sr, intensity)
+        # ── Step 2: BPM normalisation ──
+        proc = PROCESSORS[style]
+        # Override organ brand if user specified
+        if organ_brand != "auto":
+            proc.ORGAN_BRAND = organ_brand
 
-        # Final normalize
-        y_out = _normalize(y_out, target_db=-3.0)
+        y, detected_bpm = _normalise_bpm(y, sr, proc.TARGET_BPM)
 
-        _save(y_out, sr, output_path)
+        # ── Step 3: Style transformation + organ ──
+        y = proc.process(y, sr, intensity)
+
+        # ── Step 4: Final normalise ──
+        y = _normalize(y, target_db=-3.0)
+        _save(y, sr, output_path)
 
         return {
-            "original_bpm": round(bpm, 1),
-            "duration_sec": round(duration, 2),
-            "spectral_centroid_hz": round(spectral_centroid, 1),
-            "original_rms": round(rms, 4),
-            "output_sr": sr,
-            "beat_count": int(len(beats)),
+            "original_bpm":    round(bpm, 1),
+            "target_bpm":      proc.TARGET_BPM,
+            "duration_sec":    round(duration, 2),
+            "beat_count":      int(len(beats)),
+            "output_sr":       sr,
+            "vocal_removed":   vocal_removal,
+            "organ_brand":     proc.ORGAN_BRAND,
         }

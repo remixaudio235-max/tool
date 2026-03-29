@@ -1,147 +1,172 @@
-/* =====================================================
-   BeatShift – Frontend Application Logic
-   ===================================================== */
+/* ═══════════════════════════════════════════════
+   NhạcSống Beat – Frontend Logic
+   ═══════════════════════════════════════════════ */
 
-const API_BASE = '';   // same-origin; change to http://localhost:8000 for dev
+const API = '';   // same-origin; set to http://localhost:8000 for standalone dev
 
-// --- State ---
-let selectedFile = null;
+// ── State ──
+let file          = null;
+let origURL       = null;
 let selectedStyle = null;
-let originalObjectURL = null;
+let selectedBrand = 'yamaha';
 
-// --- DOM refs ---
-const dropzone        = document.getElementById('dropzone');
-const fileInput       = document.getElementById('file-input');
-const filePreview     = document.getElementById('file-preview');
-const fileNameEl      = document.getElementById('file-name');
-const fileSizeEl      = document.getElementById('file-size');
-const removeFileBtn   = document.getElementById('remove-file');
-const originalPlayer  = document.getElementById('original-player');
+// ── DOM ──
+const dropzone    = document.getElementById('dropzone');
+const fileInput   = document.getElementById('file-input');
+const filePreview = document.getElementById('file-preview');
+const fileNameEl  = document.getElementById('file-name');
+const fileSizeEl  = document.getElementById('file-size');
+const removeFileBtn = document.getElementById('remove-file');
+const origPlayer  = document.getElementById('original-player');
 
-const styleSection    = document.getElementById('style-section');
-const styleGrid       = document.getElementById('style-grid');
+const optSection  = document.getElementById('options-section');
+const styleSection= document.getElementById('style-section');
+const styleGrid   = document.getElementById('style-grid');
 
-const intensitySlider = document.getElementById('intensity-slider');
-const intensityDisplay= document.getElementById('intensity-display');
+const vocalToggle = document.getElementById('vocal-toggle');
+const vocalRow    = document.getElementById('vocal-strength-row');
+const vocalSlider = document.getElementById('vocal-strength');
+const vocalDisp   = document.getElementById('vocal-strength-display');
 
-const convertRow      = document.getElementById('convert-row');
-const convertBtn      = document.getElementById('convert-btn');
+const intensSlider= document.getElementById('intensity-slider');
+const intensDisp  = document.getElementById('intensity-display');
 
-const progressSection = document.getElementById('progress-section');
-const progressTitle   = document.getElementById('progress-title');
-const progressBar     = document.getElementById('progress-bar');
+const convertRow  = document.getElementById('convert-row');
+const convertBtn  = document.getElementById('convert-btn');
 
-const resultSection       = document.getElementById('result-section');
-const resultInfo          = document.getElementById('result-info');
-const resultStyleLabel    = document.getElementById('result-style-label');
-const resultOriginalPlayer= document.getElementById('result-original-player');
-const resultConvertedPlayer=document.getElementById('result-converted-player');
-const downloadLink        = document.getElementById('download-link');
-const convertAnotherBtn   = document.getElementById('convert-another');
+const progSection = document.getElementById('progress-section');
+const progTitle   = document.getElementById('progress-title');
+const progSub     = document.getElementById('progress-sub');
+const progBar     = document.getElementById('progress-bar');
+const progStep    = document.getElementById('progress-step');
 
-const toast               = document.getElementById('toast');
+const resultSection = document.getElementById('result-section');
+const resultChips   = document.getElementById('result-chips');
+const resStyleName  = document.getElementById('res-style-name');
+const resOrig       = document.getElementById('res-orig');
+const resConv       = document.getElementById('res-conv');
+const downloadLink  = document.getElementById('download-link');
+const convAnother   = document.getElementById('convert-another');
 
-// =====================================================
-// Toast notification
-// =====================================================
+const toastEl = document.getElementById('toast');
+
+// ═══════════════════════════════
+// Toast
+// ═══════════════════════════════
 let toastTimer = null;
-function showToast(msg, type = 'info') {
-  toast.textContent = msg;
-  toast.className = `toast show ${type}`;
+function toast(msg, type = 'info') {
+  toastEl.textContent = msg;
+  toastEl.className = `toast show ${type}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.className = 'toast hidden'; }, 4000);
+  toastTimer = setTimeout(() => { toastEl.className = 'toast hidden'; }, 4500);
 }
 
-// =====================================================
+// ═══════════════════════════════
 // File handling
-// =====================================================
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+// ═══════════════════════════════
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 ** 2) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 ** 2).toFixed(2) + ' MB';
 }
 
-function setFile(file) {
-  const allowed = ['audio/mpeg','audio/wav','audio/ogg','audio/flac','audio/mp4',
-                   'audio/aac','audio/x-m4a','audio/x-flac'];
-  const ext = file.name.split('.').pop().toLowerCase();
-  const allowedExt = ['mp3','wav','ogg','flac','m4a','aac'];
-  if (!allowedExt.includes(ext)) {
-    showToast('Unsupported file type. Please upload MP3, WAV, OGG, FLAC, or M4A.', 'error');
-    return;
-  }
-  if (file.size > 50 * 1024 * 1024) {
-    showToast('File too large. Maximum size is 50 MB.', 'error');
-    return;
-  }
+function setFile(f) {
+  const ext = f.name.split('.').pop().toLowerCase();
+  const ok  = ['mp3','wav','ogg','flac','m4a','aac'];
+  if (!ok.includes(ext)) { toast('Định dạng không được hỗ trợ.', 'error'); return; }
+  if (f.size > 50 * 1024 ** 2) { toast('File quá lớn (tối đa 50 MB).', 'error'); return; }
 
-  selectedFile = file;
-  fileNameEl.textContent = file.name;
-  fileSizeEl.textContent = formatSize(file.size);
-
-  if (originalObjectURL) URL.revokeObjectURL(originalObjectURL);
-  originalObjectURL = URL.createObjectURL(file);
-  originalPlayer.src = originalObjectURL;
+  file = f;
+  fileNameEl.textContent = f.name;
+  fileSizeEl.textContent = fmtSize(f.size);
+  if (origURL) URL.revokeObjectURL(origURL);
+  origURL = URL.createObjectURL(f);
+  origPlayer.src = origURL;
 
   filePreview.classList.remove('hidden');
   dropzone.classList.add('hidden');
 
+  optSection.classList.remove('hidden');
   styleSection.classList.remove('hidden');
-  updateConvertButton();
+  updateConvert();
 }
 
 function clearFile() {
-  selectedFile = null;
+  file = null;
   fileInput.value = '';
   filePreview.classList.add('hidden');
   dropzone.classList.remove('hidden');
+  optSection.classList.add('hidden');
   styleSection.classList.add('hidden');
   convertRow.classList.add('hidden');
-  if (originalObjectURL) { URL.revokeObjectURL(originalObjectURL); originalObjectURL = null; }
+  if (origURL) { URL.revokeObjectURL(origURL); origURL = null; }
 }
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
 dropzone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropzone.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f) setFile(f);
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
 });
-
-fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) setFile(fileInput.files[0]);
-});
-
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
 removeFileBtn.addEventListener('click', clearFile);
 
-// =====================================================
+// ═══════════════════════════════
+// Options
+// ═══════════════════════════════
+vocalToggle.addEventListener('change', () => {
+  vocalRow.style.opacity = vocalToggle.checked ? '1' : '0.4';
+  vocalRow.style.pointerEvents = vocalToggle.checked ? 'auto' : 'none';
+});
+
+function syncSlider(slider, display, suffix = '%') {
+  const v = slider.value;
+  display.textContent = v + suffix;
+  slider.style.background =
+    `linear-gradient(to right, var(--accent) 0%, var(--accent) ${v}%, var(--border) ${v}%)`;
+}
+
+vocalSlider.addEventListener('input', () => syncSlider(vocalSlider, vocalDisp));
+intensSlider.addEventListener('input', () => syncSlider(intensSlider, intensDisp));
+syncSlider(vocalSlider, vocalDisp);
+syncSlider(intensSlider, intensDisp);
+
+// Brand selection
+document.querySelectorAll('.brand-card').forEach(card => {
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.brand-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    selectedBrand = card.dataset.brand;
+  });
+});
+
+// ═══════════════════════════════
 // Styles
-// =====================================================
+// ═══════════════════════════════
 async function loadStyles() {
   try {
-    const res = await fetch(`${API_BASE}/api/styles`);
+    const res = await fetch(`${API}/api/styles`);
     const data = await res.json();
-    renderStyleGrid(data.styles);
+    renderStyles(data.styles);
   } catch {
-    // Fallback hardcoded styles
-    renderStyleGrid([
-      { id: 'lofi',      name: 'Lo-fi Hip Hop',   emoji: '🎵', description: 'Chill, warm, vinyl crackle' },
-      { id: 'edm',       name: 'EDM / Electronic', emoji: '⚡', description: 'High-energy, pumping bass' },
-      { id: 'trap',      name: 'Trap',             emoji: '🔥', description: '808s, hi-hats, dark vibes' },
-      { id: 'jazz',      name: 'Jazz',             emoji: '🎷', description: 'Swing feel, warm tone' },
-      { id: 'rock',      name: 'Rock',             emoji: '🎸', description: 'Driven, punchy, loud' },
-      { id: 'reggaeton', name: 'Reggaeton',        emoji: '🌴', description: 'Dembow rhythm, dancehall' },
-      { id: 'bossanova', name: 'Bossa Nova',       emoji: '🌸', description: 'Smooth, Brazilian groove' },
-      { id: 'rnb',       name: 'R&B / Soul',       emoji: '💜', description: 'Soulful, smooth, groovy' },
-      { id: 'phonk',     name: 'Phonk',            emoji: '💀', description: 'Memphis rap, distorted 808' },
-      { id: 'ambient',   name: 'Ambient',          emoji: '🌊', description: 'Atmospheric, dreamy pads' },
+    // fallback
+    renderStyles([
+      { id:'bolero',    emoji:'💙', name:'Bolero',      bpm:72,  mood:'Trữ tình, buồn' },
+      { id:'rumba',     emoji:'🌹', name:'Rumba',        bpm:108, mood:'Lãng mạn, nhẹ nhàng' },
+      { id:'chachacha', emoji:'💃', name:'Cha-cha-cha',  bpm:124, mood:'Vui tươi, sôi động' },
+      { id:'slowrock',  emoji:'🎸', name:'Slow Rock',    bpm:76,  mood:'Cảm xúc, mạnh mẽ' },
+      { id:'tango',     emoji:'🌊', name:'Tango',        bpm:122, mood:'Kịch tính, mạnh mẽ' },
+      { id:'disco',     emoji:'🪩', name:'Disco',        bpm:122, mood:'Sôi động, vui nhộn' },
+      { id:'valse',     emoji:'🌸', name:'Valse',        bpm:172, mood:'Lãng mạn, nhẹ nhàng' },
+      { id:'fox',       emoji:'🦊', name:'Fox Trot',     bpm:135, mood:'Duyên dáng, nhẹ nhàng' },
+      { id:'twist',     emoji:'🕺', name:'Twist',        bpm:130, mood:'Vui nhộn, retro' },
+      { id:'ballade',   emoji:'🌙', name:'Ballade',      bpm:56,  mood:'Sâu lắng, cô đơn' },
     ]);
   }
 }
 
-function renderStyleGrid(styles) {
+function renderStyles(styles) {
   styleGrid.innerHTML = '';
   styles.forEach(s => {
     const card = document.createElement('div');
@@ -150,162 +175,141 @@ function renderStyleGrid(styles) {
     card.innerHTML = `
       <div class="style-emoji">${s.emoji}</div>
       <div class="style-name">${s.name}</div>
-      <div class="style-desc">${s.description}</div>
+      <div class="style-bpm">♩ ${s.bpm} BPM · ${s.time_sig || '4/4'}</div>
+      <div class="style-mood">${s.mood}</div>
     `;
-    card.addEventListener('click', () => selectStyle(s.id));
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.style-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      selectedStyle = s.id;
+      updateConvert();
+    });
     styleGrid.appendChild(card);
   });
 }
 
-function selectStyle(id) {
-  selectedStyle = id;
-  document.querySelectorAll('.style-card').forEach(c => {
-    c.classList.toggle('selected', c.dataset.id === id);
-  });
-  updateConvertButton();
+function updateConvert() {
+  convertRow.classList.toggle('hidden', !(file && selectedStyle));
 }
 
-function updateConvertButton() {
-  if (selectedFile && selectedStyle) {
-    convertRow.classList.remove('hidden');
-  } else {
-    convertRow.classList.add('hidden');
-  }
-}
-
-// =====================================================
-// Intensity slider
-// =====================================================
-intensitySlider.addEventListener('input', () => {
-  const val = intensitySlider.value;
-  intensityDisplay.textContent = val + '%';
-  // Update gradient
-  intensitySlider.style.background =
-    `linear-gradient(to right, var(--accent) 0%, var(--accent) ${val}%, var(--border) ${val}%)`;
-});
-
-// =====================================================
-// Conversion
-// =====================================================
-const PROGRESS_STEPS = [
-  { pct: 10, text: 'Reading audio file…' },
-  { pct: 25, text: 'Detecting BPM and beats…' },
-  { pct: 45, text: 'Applying style transformations…' },
-  { pct: 70, text: 'Processing EQ and effects…' },
-  { pct: 88, text: 'Normalizing output…' },
-  { pct: 95, text: 'Finalizing file…' },
+// ═══════════════════════════════
+// Progress simulation
+// ═══════════════════════════════
+const STEPS = [
+  { pct:  8, msg: '📂 Đang đọc file âm thanh…' },
+  { pct: 22, msg: '🎵 Phân tích BPM và nhịp…' },
+  { pct: 40, msg: '🎤 Đang tách giọng vocal…' },
+  { pct: 58, msg: '🎹 Áp dụng âm sắc Organ…' },
+  { pct: 72, msg: '🔊 Xử lý hiệu ứng Leslie…' },
+  { pct: 84, msg: '⚙️  Điều chỉnh EQ và dynamics…' },
+  { pct: 93, msg: '✨ Chuẩn hoá output…' },
 ];
 
-let progressInterval = null;
+let progTimer = null;
 
-function startFakeProgress() {
-  let step = 0;
-  progressBar.style.width = '5%';
-  progressTitle.textContent = 'Preparing…';
-
-  progressInterval = setInterval(() => {
-    if (step >= PROGRESS_STEPS.length) {
-      clearInterval(progressInterval);
-      return;
-    }
-    const { pct, text } = PROGRESS_STEPS[step++];
-    progressBar.style.width = pct + '%';
-    progressTitle.textContent = text;
-  }, 900);
+function startProgress() {
+  let i = 0;
+  progBar.style.width = '3%';
+  progTitle.textContent = 'Bắt đầu xử lý…';
+  progStep.textContent  = '';
+  progTimer = setInterval(() => {
+    if (i >= STEPS.length) { clearInterval(progTimer); return; }
+    progBar.style.width  = STEPS[i].pct + '%';
+    progTitle.textContent = STEPS[i].msg;
+    progStep.textContent  = `Bước ${i + 1} / ${STEPS.length}`;
+    i++;
+  }, 1100);
 }
 
-function stopFakeProgress() {
-  clearInterval(progressInterval);
-  progressBar.style.width = '100%';
+function stopProgress() {
+  clearInterval(progTimer);
+  progBar.style.width  = '100%';
+  progTitle.textContent = '✅ Hoàn thành!';
+  progStep.textContent  = '';
 }
 
+// ═══════════════════════════════
+// Conversion
+// ═══════════════════════════════
 convertBtn.addEventListener('click', async () => {
-  if (!selectedFile || !selectedStyle) return;
+  if (!file || !selectedStyle) return;
 
-  // UI transitions
   convertRow.classList.add('hidden');
   resultSection.classList.add('hidden');
-  progressSection.classList.remove('hidden');
-  startFakeProgress();
+  progSection.classList.remove('hidden');
+  startProgress();
 
-  const formData = new FormData();
-  formData.append('file', selectedFile);
-  formData.append('style', selectedStyle);
-  formData.append('intensity', (parseFloat(intensitySlider.value) / 100).toFixed(2));
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('style', selectedStyle);
+  fd.append('intensity', (parseInt(intensSlider.value) / 100).toFixed(2));
+  fd.append('vocal_removal', vocalToggle.checked);
+  fd.append('vocal_strength', (parseInt(vocalSlider.value) / 100).toFixed(2));
+  fd.append('organ_brand', selectedBrand);
 
   try {
-    const res = await fetch(`${API_BASE}/api/convert`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    stopFakeProgress();
-
+    const res = await fetch(`${API}/api/convert`, { method: 'POST', body: fd });
+    stopProgress();
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
-
     const data = await res.json();
     showResult(data);
-
   } catch (err) {
-    stopFakeProgress();
-    progressSection.classList.add('hidden');
+    stopProgress();
+    progSection.classList.add('hidden');
     convertRow.classList.remove('hidden');
-    showToast(`Conversion failed: ${err.message}`, 'error');
+    toast(`Lỗi: ${err.message}`, 'error');
   }
 });
 
+function fmtDur(s) {
+  return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+}
+
 function showResult(data) {
-  progressSection.classList.add('hidden');
+  progSection.classList.add('hidden');
+
+  const info = data.info || {};
 
   // Chips
-  const info = data.info || {};
-  resultInfo.innerHTML = '';
-  const chips = [
-    { label: 'Style',    value: data.style.toUpperCase() },
-    { label: 'BPM',      value: info.original_bpm ? info.original_bpm + ' bpm' : '—' },
-    { label: 'Duration', value: info.duration_sec ? formatDur(info.duration_sec) : '—' },
-    { label: 'Beats',    value: info.beat_count ?? '—' },
-    { label: 'Sample Rate', value: info.output_sr ? info.output_sr + ' Hz' : '—' },
-  ];
-  chips.forEach(({ label, value }) => {
+  resultChips.innerHTML = '';
+  [
+    { label: 'Điệu',        value: data.style.toUpperCase() },
+    { label: 'BPM gốc',     value: info.original_bpm ? info.original_bpm + ' bpm' : '—' },
+    { label: 'BPM mục tiêu',value: info.target_bpm ? info.target_bpm + ' bpm' : '—' },
+    { label: 'Thời gian',   value: info.duration_sec ? fmtDur(info.duration_sec) : '—' },
+    { label: 'Số nhịp',     value: info.beat_count ?? '—' },
+    { label: 'Organ',       value: (info.organ_brand || '—').toUpperCase() },
+    { label: 'Tách vocal',  value: info.vocal_removed ? '✅ Đã tách' : '⏭ Bỏ qua' },
+  ].forEach(({ label, value }) => {
     const chip = document.createElement('div');
-    chip.className = 'info-chip';
-    chip.innerHTML = `<span class="info-chip-label">${label}</span><span class="info-chip-value">${value}</span>`;
-    resultInfo.appendChild(chip);
+    chip.className = 'chip';
+    chip.innerHTML = `<span class="chip-label">${label}</span><span class="chip-value">${value}</span>`;
+    resultChips.appendChild(chip);
   });
 
   // Players
-  resultOriginalPlayer.src = originalObjectURL;
-  const convertedURL = `${API_BASE}${data.download_url}`;
-  resultConvertedPlayer.src = convertedURL;
+  resOrig.src = origURL;
+  const convURL = `${API}${data.download_url}`;
+  resConv.src = convURL;
 
-  // Style label
-  const styleCard = document.querySelector(`.style-card[data-id="${data.style}"]`);
-  const styleName = styleCard ? styleCard.querySelector('.style-name').textContent : data.style;
-  resultStyleLabel.textContent = styleName;
+  const card = document.querySelector(`.style-card[data-id="${data.style}"]`);
+  resStyleName.textContent = card
+    ? card.querySelector('.style-name').textContent + ' Beat'
+    : 'Beat đã chuyển';
 
-  // Download link
-  downloadLink.href = convertedURL;
-  downloadLink.download = `${selectedFile.name.replace(/\.[^.]+$/, '')}_${data.style}.wav`;
+  downloadLink.href     = convURL;
+  downloadLink.download = file.name.replace(/\.[^.]+$/, '') + `_${data.style}_karaoke.wav`;
 
   resultSection.classList.remove('hidden');
   resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  showToast('Conversion complete!', 'success');
+  toast('Beat karaoke đã sẵn sàng! 🎹', 'success');
 }
 
-function formatDur(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-// =====================================================
-// Convert another
-// =====================================================
-convertAnotherBtn.addEventListener('click', () => {
+// ── Convert another ──
+convAnother.addEventListener('click', () => {
   resultSection.classList.add('hidden');
   clearFile();
   selectedStyle = null;
@@ -314,7 +318,5 @@ convertAnotherBtn.addEventListener('click', () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
-// =====================================================
-// Init
-// =====================================================
+// ── Init ──
 loadStyles();
