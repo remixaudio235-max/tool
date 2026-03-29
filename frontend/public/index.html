@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BeatShift – Music Style Converter</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🎵</span>
+        <span class="logo-text">BeatShift</span>
+      </div>
+      <p class="tagline">Transform any song into a new musical style with AI-powered beat conversion</p>
+    </header>
+
+    <!-- Main content -->
+    <main class="main">
+
+      <!-- Step 1: Upload -->
+      <section class="step-card" id="upload-section">
+        <div class="step-number">01</div>
+        <h2 class="step-title">Upload Your Track</h2>
+        <p class="step-desc">Supports MP3, WAV, OGG, FLAC, M4A · Max 50 MB</p>
+
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone-icon">🎼</div>
+          <p class="dropzone-text">Drag &amp; drop your audio file here</p>
+          <p class="dropzone-sub">or</p>
+          <label class="btn btn-outline" for="file-input">Browse files</label>
+          <input type="file" id="file-input" accept=".mp3,.wav,.ogg,.flac,.m4a,.aac" hidden />
+        </div>
+
+        <div class="file-preview hidden" id="file-preview">
+          <div class="file-info">
+            <span class="file-icon">🎵</span>
+            <div class="file-details">
+              <span class="file-name" id="file-name"></span>
+              <span class="file-size" id="file-size"></span>
+            </div>
+            <button class="btn-icon" id="remove-file" title="Remove">✕</button>
+          </div>
+          <audio id="original-player" controls class="audio-player"></audio>
+        </div>
+      </section>
+
+      <!-- Step 2: Choose Style -->
+      <section class="step-card hidden" id="style-section">
+        <div class="step-number">02</div>
+        <h2 class="step-title">Choose a Beat Style</h2>
+        <p class="step-desc">Select how you want to transform your track</p>
+
+        <div class="style-grid" id="style-grid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Intensity slider -->
+        <div class="intensity-row">
+          <label class="intensity-label">
+            Effect Intensity
+            <span class="intensity-value" id="intensity-display">70%</span>
+          </label>
+          <input type="range" id="intensity-slider" min="0" max="100" value="70" class="slider" />
+          <div class="intensity-hints">
+            <span>Subtle</span>
+            <span>Full transformation</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Convert button -->
+      <div class="convert-row hidden" id="convert-row">
+        <button class="btn btn-primary btn-large" id="convert-btn">
+          <span class="btn-icon-left">⚡</span>
+          Convert Beat
+        </button>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-section hidden" id="progress-section">
+        <div class="progress-card">
+          <div class="spinner"></div>
+          <div class="progress-text">
+            <p class="progress-title" id="progress-title">Analyzing your track…</p>
+            <p class="progress-sub" id="progress-sub">This may take 15–60 seconds depending on file size</p>
+          </div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Result -->
+      <section class="step-card hidden" id="result-section">
+        <div class="step-number">03</div>
+        <h2 class="step-title">Your Converted Track</h2>
+
+        <div class="result-info" id="result-info">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="result-players">
+          <div class="player-col">
+            <p class="player-label">Original</p>
+            <audio id="result-original-player" controls class="audio-player"></audio>
+          </div>
+          <div class="vs-badge">VS</div>
+          <div class="player-col">
+            <p class="player-label" id="result-style-label">Converted</p>
+            <audio id="result-converted-player" controls class="audio-player"></audio>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <a id="download-link" class="btn btn-primary" download>
+            <span>⬇</span> Download WAV
+          </a>
+          <button class="btn btn-outline" id="convert-another">
+            Convert Another
+          </button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>BeatShift uses signal processing (EQ · reverb · saturation · time-stretch) — no AI models required</p>
+    </footer>
+
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
