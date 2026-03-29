@@ -1,200 +1,138 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NhạcSống Beat – Chuyển bài hát thành beat karaoke nhạc sống</title>
-  <link rel="stylesheet" href="style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BeatStyle – Chuyển Beat sang Style Khác</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
 </head>
 <body>
 <div class="app">
 
-  <!-- ── Header ── -->
+  <!-- Header -->
   <header class="header">
     <div class="logo">
-      <span class="logo-icon">🎹</span>
-      <span class="logo-text">NhạcSống<span class="logo-accent">Beat</span></span>
+      <span class="logo-icon">🎛️</span>
+      <span class="logo-text">Beat<span class="logo-hl">Style</span></span>
     </div>
-    <p class="tagline">Chuyển bất kỳ bài hát nào thành beat karaoke nhạc sống Việt Nam<br>
-      <span class="tagline-sub">Âm thanh Organ Roland · Yamaha · Tách vocal tự động</span>
+    <p class="tagline">
+      Upload beat gốc (đã tách vocal) → Chuyển sang style mới<br>
+      <span class="tagline-sub">Nhạc Sống · Hard Rock · Heavy Metal · EDM · Trap · Lo-fi · …</span>
     </p>
   </header>
 
   <main class="main">
 
-    <!-- ── Step 1: Upload ── -->
-    <section class="step-card" id="upload-section">
-      <div class="step-badge">BƯỚC 1</div>
-      <h2 class="step-title">Tải lên bài hát</h2>
-      <p class="step-desc">MP3, WAV, FLAC, OGG, M4A · Tối đa 50 MB</p>
+    <!-- ── Upload ── -->
+    <section class="card" id="upload-card">
+      <div class="card-tag">BƯỚC 1 · UPLOAD BEAT</div>
 
       <div class="dropzone" id="dropzone">
-        <div class="dropzone-icon">🎵</div>
-        <p class="dropzone-text">Kéo thả file nhạc vào đây</p>
-        <p class="dropzone-or">hoặc</p>
-        <label class="btn btn-outline" for="file-input">Chọn file</label>
-        <input type="file" id="file-input" accept=".mp3,.wav,.ogg,.flac,.m4a,.aac" hidden />
+        <div class="dz-icon">🎚️</div>
+        <p class="dz-title">Kéo thả beat vào đây</p>
+        <p class="dz-hint">MP3 · WAV · FLAC · OGG · M4A · Tối đa 50 MB</p>
+        <label class="btn btn-sm btn-outline" for="file-input">Chọn file</label>
+        <input type="file" id="file-input" accept=".mp3,.wav,.ogg,.flac,.m4a,.aac" hidden/>
       </div>
 
-      <div class="file-preview hidden" id="file-preview">
-        <div class="file-row">
-          <span class="file-icon-big">🎵</span>
-          <div class="file-meta">
-            <span class="file-name" id="file-name"></span>
-            <span class="file-size" id="file-size"></span>
-          </div>
-          <button class="btn-x" id="remove-file">✕</button>
+      <div class="file-bar hidden" id="file-bar">
+        <span class="fb-icon">🎚️</span>
+        <div class="fb-info">
+          <span class="fb-name" id="fb-name"></span>
+          <span class="fb-size" id="fb-size"></span>
         </div>
-        <audio id="original-player" controls class="audio-player"></audio>
+        <button class="btn-x" id="btn-remove">✕</button>
+      </div>
+      <audio id="orig-player" controls class="player hidden"></audio>
+    </section>
+
+    <!-- ── Style picker ── -->
+    <section class="card hidden" id="style-card">
+      <div class="card-tag">BƯỚC 2 · CHỌN STYLE MỚI</div>
+
+      <div class="style-groups" id="style-groups">
+        <!-- filled by JS -->
       </div>
     </section>
 
-    <!-- ── Step 2: Options ── -->
-    <section class="step-card hidden" id="options-section">
-      <div class="step-badge">BƯỚC 2</div>
-      <h2 class="step-title">Cài đặt Beat</h2>
+    <!-- ── Intensity ── -->
+    <section class="card hidden" id="intensity-card">
+      <div class="card-tag">BƯỚC 3 · CƯỜNG ĐỘ HIỆU ỨNG</div>
 
-      <!-- Vocal removal toggle -->
-      <div class="option-group">
-        <div class="option-row">
-          <div class="option-info">
-            <span class="option-label">🎤 Tách Vocal (Karaoke)</span>
-            <span class="option-desc">Xoá giọng hát, giữ lại nhạc nền</span>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="vocal-toggle" checked />
-            <span class="toggle-track"></span>
-          </label>
+      <div class="ix-row">
+        <div class="ix-presets">
+          <button class="preset" data-val="30">Nhẹ<span>30%</span></button>
+          <button class="preset active" data-val="70">Chuẩn<span>70%</span></button>
+          <button class="preset" data-val="100">Mạnh nhất<span>100%</span></button>
         </div>
-
-        <div class="slider-row" id="vocal-strength-row">
-          <label class="slider-label">
-            Mức độ tách vocal
-            <span class="slider-val" id="vocal-strength-display">85%</span>
-          </label>
-          <input type="range" id="vocal-strength" min="0" max="100" value="85" class="slider" />
-          <div class="slider-hints"><span>Nhẹ</span><span>Mạnh nhất</span></div>
+        <div class="slider-wrap">
+          <input type="range" id="ix-slider" min="0" max="100" value="70" class="slider"/>
+          <span class="slider-val" id="ix-val">70%</span>
         </div>
-      </div>
-
-      <!-- Organ brand -->
-      <div class="option-group">
-        <p class="option-label">🎹 Âm thanh Organ</p>
-        <div class="brand-grid">
-          <div class="brand-card selected" data-brand="yamaha">
-            <span class="brand-logo">🎹</span>
-            <span class="brand-name">Yamaha</span>
-            <span class="brand-desc">Ấm, mượt, nhạc sống cổ điển</span>
-          </div>
-          <div class="brand-card" data-brand="roland">
-            <span class="brand-logo">🎸</span>
-            <span class="brand-name">Roland</span>
-            <span class="brand-desc">Sáng, mạnh, hiện đại</span>
-          </div>
-          <div class="brand-card" data-brand="auto">
-            <span class="brand-logo">✨</span>
-            <span class="brand-name">Tự động</span>
-            <span class="brand-desc">Chọn theo điệu nhạc</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Effect intensity -->
-      <div class="option-group">
-        <div class="slider-row">
-          <label class="slider-label">
-            ⚡ Cường độ hiệu ứng
-            <span class="slider-val" id="intensity-display">70%</span>
-          </label>
-          <input type="range" id="intensity-slider" min="0" max="100" value="70" class="slider" />
-          <div class="slider-hints"><span>Nhẹ</span><span>Mạnh nhất</span></div>
-        </div>
+        <p class="ix-desc" id="ix-desc">Style được áp dụng ở mức chuẩn, cân bằng giữa gốc và mới.</p>
       </div>
     </section>
 
-    <!-- ── Step 3: Choose Style ── -->
-    <section class="step-card hidden" id="style-section">
-      <div class="step-badge">BƯỚC 3</div>
-      <h2 class="step-title">Chọn Điệu Nhạc Sống</h2>
-      <p class="step-desc">Chọn phong cách bạn muốn chuyển bài hát sang</p>
-
-      <div class="style-grid" id="style-grid">
-        <!-- Populated by JS -->
-      </div>
-    </section>
-
-    <!-- ── Convert button ── -->
+    <!-- ── Convert ── -->
     <div class="convert-row hidden" id="convert-row">
-      <button class="btn btn-primary btn-large" id="convert-btn">
-        <span>🎹</span> Tạo Beat Karaoke
+      <div class="selected-summary" id="selected-summary"></div>
+      <button class="btn btn-convert" id="btn-convert">
+        🎛️ &nbsp;Chuyển Beat
       </button>
     </div>
 
     <!-- ── Progress ── -->
-    <div class="progress-section hidden" id="progress-section">
-      <div class="progress-card">
-        <div class="waveform" id="waveform">
+    <div class="progress-wrap hidden" id="progress-wrap">
+      <div class="card progress-card">
+        <div class="bars" id="bars">
           <span></span><span></span><span></span><span></span>
           <span></span><span></span><span></span><span></span>
+          <span></span><span></span>
         </div>
-        <p class="progress-title" id="progress-title">Đang tải file…</p>
-        <p class="progress-sub" id="progress-sub">Quá trình mất 15–60 giây tuỳ kích thước file</p>
-        <div class="progress-bar-wrap">
-          <div class="progress-bar" id="progress-bar"></div>
+        <p class="prog-title" id="prog-title">Đang xử lý…</p>
+        <div class="prog-bar-bg">
+          <div class="prog-bar" id="prog-bar"></div>
         </div>
-        <p class="progress-step" id="progress-step"></p>
+        <p class="prog-step" id="prog-step"></p>
       </div>
     </div>
 
     <!-- ── Result ── -->
-    <section class="step-card result-card hidden" id="result-section">
-      <div class="step-badge result-badge">HOÀN THÀNH</div>
-      <h2 class="step-title">Beat Karaoke của bạn</h2>
+    <section class="card result-card hidden" id="result-card">
+      <div class="card-tag result-tag">✅ HOÀN THÀNH</div>
 
-      <div class="result-chips" id="result-chips"></div>
+      <div class="result-meta" id="result-meta"></div>
 
-      <div class="compare-players">
-        <div class="player-block">
-          <div class="player-header">
-            <span class="player-dot original"></span>
-            Bài gốc
-          </div>
-          <audio id="res-orig" controls class="audio-player"></audio>
+      <div class="compare" id="compare">
+        <div class="cmp-col">
+          <p class="cmp-label"><span class="dot dot-orig"></span>Beat gốc</p>
+          <audio id="r-orig" controls class="player"></audio>
         </div>
-        <div class="vs-divider">
-          <span>VS</span>
-        </div>
-        <div class="player-block">
-          <div class="player-header">
-            <span class="player-dot converted"></span>
-            <span id="res-style-name">Beat đã chuyển</span>
-          </div>
-          <audio id="res-conv" controls class="audio-player"></audio>
+        <div class="cmp-arrow">→</div>
+        <div class="cmp-col">
+          <p class="cmp-label"><span class="dot dot-new"></span><span id="r-style-name">Style mới</span></p>
+          <audio id="r-conv" controls class="player"></audio>
         </div>
       </div>
 
       <div class="result-actions">
-        <a id="download-link" class="btn btn-primary" download>
-          ⬇ Tải về WAV
-        </a>
-        <button class="btn btn-outline" id="convert-another">
-          🔄 Chuyển bài khác
-        </button>
+        <a id="dl-link" class="btn btn-dl" download>⬇ &nbsp;Tải về WAV</a>
+        <button class="btn btn-outline" id="btn-another">🔄 &nbsp;Chuyển beat khác</button>
+        <button class="btn btn-outline" id="btn-re-style">🎛️ &nbsp;Đổi style khác</button>
       </div>
     </section>
 
   </main>
 
   <footer class="footer">
-    <p>NhạcSống Beat · Xử lý tín hiệu âm thanh thuần túy · Không cần AI · Chạy hoàn toàn trên máy bạn</p>
+    BeatStyle · Xử lý tín hiệu DSP thuần túy · Input: beat đã tách vocal · Output: WAV 16-bit
   </footer>
 
 </div>
 
 <div class="toast hidden" id="toast"></div>
-
 <script src="app.js"></script>
 </body>
 </html>
