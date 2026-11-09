@@ -1,0 +1,20 @@
+{
+  "version": "9.8.2",
+  "channel": "pro",
+  "release_channel": "macos-qa",
+  "notes": "RemiX Tune macOS 9.8.2 QA: dedicated ARM64 / Intel DMG, in-app update feed, correct full version comparison, Cython 9.8.2, Ed25519/Rubix/session restore. Requires confirmation before installation. DMGs are not Apple-notarized; real Intel audio hardware not yet validated.",
+  "macos_arm64": {
+    "version": "9.8.2",
+    "installer_name": "RemiX_Tune_9_8_2_macOS_AppleSilicon.dmg",
+    "installer_url": "https://github.com/remixaudio235-max/tool/releases/download/v9.8.2-macos-qa.20261109/RemiX_Tune_9_8_2_macOS_AppleSilicon.dmg",
+    "app_name": "RemiX Tune.app",
+    "sha256": "4ba977063c9e7d2a3bda0b506ed6f9211272ce4d541b47b660283b23eaec7a7b"
+  },
+  "macos_x86_64": {
+    "version": "9.8.2",
+    "installer_name": "RemiX_Tune_9_8_2_macOS_Intel.dmg",
+    "installer_url": "https://github.com/remixaudio235-max/tool/releases/download/v9.8.2-macos-qa.20261109/RemiX_Tune_9_8_2_macOS_Intel.dmg",
+    "app_name": "RemiX Tune.app",
+    "sha256": "34831089e40bd494144bcb6a7c0633be64797f269fc6b83635c8e09c954fb5f4"
+  }
+}
