@@ -1,0 +1,83 @@
+name: Publish RemiX 9.8.1 macOS QA DMGs
+on:
+  push:
+    branches:
+      - release/macos-qa-20261109
+    paths:
+      - .github/workflows/publish-remix-macos-qa-20261109.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Fetch the two verified macOS release installers
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          curl --fail --location --show-error --silent --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 1800 'https://scholars-viewing-gerald-interesting.trycloudflare.com/RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg' -o assets/RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg
+          curl --fail --location --show-error --silent --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 1800 'https://scholars-viewing-gerald-interesting.trycloudflare.com/RemiX_Tune_9_8_1_macOS_Intel.dmg' -o assets/RemiX_Tune_9_8_1_macOS_Intel.dmg
+          printf '%s\n' '31f99d54f6e2ea314c37d89afaca82ca1afd7261700ac19c3e73b61cbc66d753  assets/RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg' '6811ef7d7ae982d2cbfe2fc059e54d57e9c4fdd7ef94be9d568a3f8b433082bb  assets/RemiX_Tune_9_8_1_macOS_Intel.dmg' > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          cp SHA256SUMS.txt assets/SHA256SUMS.txt
+          cat > assets/RELEASE_NOTES.md <<'NOTES'
+          RemiX Tune 9.8.1 macOS QA — 2026-11-09
+
+          - Apple Silicon ARM64 / macOS 13+: RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg
+          - Intel x86_64 / macOS 11+: RemiX_Tune_9_8_1_macOS_Intel.dmg
+          - In Applications, both appear as RemiX Tune.app (short name).
+          - SHA256SUMS.txt contains exact checksums; installed binaries passed offline Ed25519, TF synthetic, Rubix CoreAudio profile and session restore checks.
+
+          IMPORTANT: This is an ad-hoc-signed QA release, NOT Apple notarized.
+          Real Intel hardware and physical CoreAudio signal streaming were not validated.
+          Manual download/install is available; platform-aware in-app automatic update must be separately released and verified.
+          Existing stable Windows update channel v9.8.0 remains unchanged.
+          NOTES
+          cat > assets/macos-release.json <<'JSON'
+          {
+            "version": "9.8.1",
+            "release_tag": "v9.8.1-macos-qa.20261109",
+            "channel": "macos-qa",
+            "macos_arm64": {
+              "version": "9.8.1",
+              "installer_name": "RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg",
+              "app_name": "RemiX Tune.app",
+              "sha256": "31f99d54f6e2ea314c37d89afaca82ca1afd7261700ac19c3e73b61cbc66d753",
+              "installer_url": "https://github.com/remixaudio235-max/tool/releases/download/v9.8.1-macos-qa.20261109/RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg"
+            },
+            "macos_x86_64": {
+              "version": "9.8.1",
+              "installer_name": "RemiX_Tune_9_8_1_macOS_Intel.dmg",
+              "app_name": "RemiX Tune.app",
+              "sha256": "6811ef7d7ae982d2cbfe2fc059e54d57e9c4fdd7ef94be9d568a3f8b433082bb",
+              "installer_url": "https://github.com/remixaudio235-max/tool/releases/download/v9.8.1-macos-qa.20261109/RemiX_Tune_9_8_1_macOS_Intel.dmg"
+            }
+          }
+          JSON
+
+      - name: Publish a prerelease without changing Windows latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag='v9.8.1-macos-qa.20261109'
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release tag already exists: refusing to overwrite" >&2
+            exit 9
+          fi
+          gh release create "$tag" \
+            assets/RemiX_Tune_9_8_1_macOS_AppleSilicon.dmg \
+            assets/RemiX_Tune_9_8_1_macOS_Intel.dmg \
+            assets/SHA256SUMS.txt \
+            assets/macos-release.json \
+            --title 'RemiX Tune 9.8.1 — macOS Apple & Intel (QA)' \
+            --notes-file assets/RELEASE_NOTES.md \
+            --prerelease \
+            --latest=false \
+            --target "$GITHUB_SHA"
+          gh release view "$tag" --json url,assets --jq '{url:.url,assets:[.assets[].name]}'
